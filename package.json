@@ -1,0 +1,17 @@
+{
+  "name": "sun-ws-api",
+  "version": "1.0.0",
+  "description": "WebSocket API for sun.win dice game",
+  "main": "sun2.js",
+  "scripts": {
+    "start": "node sun2.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.2",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
