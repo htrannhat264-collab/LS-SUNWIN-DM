@@ -19,8 +19,10 @@ const PING_INTERVAL = 15000;
 let lastResult = null;
 let resultHistory = [];
 let currentSessionId = null;
+let lastSessionId = null; // Lưu phiên trước đó
 let isWaitingForResult = false;
 let isConnected = false;
+let sessionQueue = []; // Queue lưu các phiên
 
 // ------------------ INIT MESSAGES ------------------
 const initialMessages = [
@@ -71,13 +73,13 @@ function connectWebSocket() {
         pingInterval = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.ping();
-                console.log('[📶] Ping sent');
+                // console.log('[📶] Ping sent');
             }
         }, PING_INTERVAL);
     });
 
     ws.on('pong', () => {
-        console.log('[📶] Pong received');
+        // console.log('[📶] Pong received');
     });
 
     ws.on('message', (message) => {
@@ -93,28 +95,60 @@ function connectWebSocket() {
                 return;
             }
 
-            const { cmd, sid, d1, d2, d3, gBB } = msgData;
+            const { cmd, sid, d1, d2, d3, gBB, sessionId } = msgData;
 
-            // Log để debug
-            console.log(`[📨] Received: cmd=${cmd}, sid=${sid}, d1=${d1}, d2=${d2}, d3=${d3}, gBB=${gBB}`);
+            // Log đầy đủ để debug
+            console.log(`[📨] CMD=${cmd}, SID=${sid || sessionId}, d1=${d1}, d2=${d2}, d3=${d3}, gBB=${gBB}`);
 
-            // Xử lý session mới (CMD 1008)
-            if (cmd === 1008 && sid) {
-                currentSessionId = sid;
-                isWaitingForResult = true;
-                console.log(`[🆕] New session: ${sid}`);
+            // XỬ LÝ SESSION MỚI (CMD 1008)
+            if (cmd === 1008) {
+                // Lấy session ID từ nhiều nguồn
+                const newSessionId = sid || sessionId || msgData.id;
+                
+                if (newSessionId) {
+                    // Lưu phiên cũ vào queue nếu có
+                    if (currentSessionId && currentSessionId !== newSessionId) {
+                        sessionQueue.push(currentSessionId);
+                        if (sessionQueue.length > 10) {
+                            sessionQueue.shift();
+                        }
+                        lastSessionId = currentSessionId;
+                    }
+                    
+                    currentSessionId = newSessionId;
+                    isWaitingForResult = true;
+                    console.log(`[🆕] New session: ${newSessionId} (previous: ${lastSessionId || 'none'})`);
+                }
                 return;
             }
 
-            // Xử lý kết quả (CMD 1003)
+            // XỬ LÝ KẾT QUẢ (CMD 1003)
             if (cmd === 1003 && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
-                // Chỉ xử lý khi có gBB (kết quả chính thức)
+                // Lấy session ID từ message
+                const resultSessionId = sid || sessionId || msgData.id;
+                
+                // Nếu có gBB thì là kết quả chính thức
                 if (gBB) {
                     const total = d1 + d2 + d3;
                     const result = total > 10 ? "Tài" : "Xỉu";
 
+                    // QUAN TRỌNG: Lấy đúng phiên
+                    // Ưu tiên: session trong message > currentSessionId > session trong queue
+                    let finalSessionId = resultSessionId;
+                    
+                    // Nếu không có session trong message, lấy từ current
+                    if (!finalSessionId) {
+                        finalSessionId = currentSessionId;
+                    }
+                    
+                    // Nếu vẫn ko có, lấy từ queue (phiên gần nhất)
+                    if (!finalSessionId && sessionQueue.length > 0) {
+                        finalSessionId = sessionQueue[sessionQueue.length - 1];
+                    }
+
+                    // Tạo kết quả
                     const resultData = {
-                        "Phien": sid || currentSessionId || Date.now(),
+                        "Phien": finalSessionId || Date.now(),
                         "Xuc_xac_1": d1,
                         "Xuc_xac_2": d2,
                         "Xuc_xac_3": d3,
@@ -126,7 +160,7 @@ function connectWebSocket() {
 
                     // Lưu vào history
                     resultHistory.push(resultData);
-                    if (resultHistory.length > 20) {
+                    if (resultHistory.length > 30) {
                         resultHistory.shift();
                     }
 
@@ -134,18 +168,19 @@ function connectWebSocket() {
                     lastResult = resultData;
 
                     console.log(`[🎯] ✅ RESULT: ${resultData.Phien} - ${d1} ${d2} ${d3} = ${total} (${result})`);
+                    console.log(`[📊] Session map: Current=${currentSessionId}, Last=${lastSessionId}, Queue=${sessionQueue.slice(-3)}`);
 
                     // Reset state
                     isWaitingForResult = false;
-                    currentSessionId = null;
+                    // KHÔNG reset currentSessionId ngay để đảm bảo đồng bộ
                 } else {
-                    console.log(`[📊] Temp data: ${d1} ${d2} ${d3} (waiting for gBB)`);
+                    console.log(`[📊] Temp data: ${d1} ${d2} ${d3} (no gBB, session=${resultSessionId})`);
                 }
             }
 
-            // Xử lý các cmd khác nếu cần
+            // Xử lý các cmd khác
             if (cmd === 1006) {
-                console.log(`[💰] Balance update: ${JSON.stringify(msgData)}`);
+                console.log(`[💰] Balance update`);
             }
 
         } catch (e) {
@@ -154,7 +189,7 @@ function connectWebSocket() {
     });
 
     ws.on('close', (code, reason) => {
-        console.log(`[🔌] Connection closed. Code: ${code}, Reason: ${reason || 'No reason'}`);
+        console.log(`[🔌] Connection closed. Code: ${code}`);
         isConnected = false;
         clearInterval(pingInterval);
         clearTimeout(reconnectTimeout);
@@ -174,6 +209,7 @@ function connectWebSocket() {
 // API chính - lấy kết quả mới nhất
 app.get('/api/ditmemaysun', (req, res) => {
     if (lastResult) {
+        console.log(`[📤] API trả về phiên: ${lastResult.Phien}`);
         res.json(lastResult);
     } else {
         res.json({
@@ -198,23 +234,28 @@ app.get('/api/history', (req, res) => {
     });
 });
 
-// Trạng thái hệ thống
+// Trạng thái hệ thống - chi tiết
 app.get('/api/status', (req, res) => {
     res.json({
         connected: isConnected,
         wsState: ws ? ws.readyState : -1,
         currentSession: currentSessionId,
+        lastSession: lastSessionId,
+        sessionQueue: sessionQueue.slice(-5),
         isWaiting: isWaitingForResult,
         hasResult: !!lastResult,
-        lastSession: lastResult ? lastResult.Phien : null,
-        historyCount: resultHistory.length
+        lastResultSession: lastResult ? lastResult.Phien : null,
+        historyCount: resultHistory.length,
+        lastUpdate: lastResult ? lastResult.timestamp : null
     });
 });
 
-// Lấy thông tin phiên hiện tại (theo dõi)
+// Lấy thông tin phiên hiện tại
 app.get('/api/session', (req, res) => {
     res.json({
         currentSessionId: currentSessionId,
+        lastSessionId: lastSessionId,
+        sessionQueue: sessionQueue,
         isWaitingForResult: isWaitingForResult,
         lastResult: lastResult
     });
@@ -224,7 +265,7 @@ app.get('/api/session', (req, res) => {
 app.get('/', (req, res) => {
     res.json({
         name: "Tài Xỉu API",
-        version: "1.0.0",
+        version: "1.1.0",
         status: isConnected ? "connected" : "disconnected",
         endpoints: {
             result: "/api/ditmemaysun",
@@ -232,6 +273,7 @@ app.get('/', (req, res) => {
             status: "/api/status",
             session: "/api/session"
         },
+        currentSession: currentSessionId,
         lastResult: lastResult,
         historyCount: resultHistory.length
     });
@@ -245,7 +287,7 @@ app.listen(PORT, () => {
     console.log(`\n📡 API Endpoints:`);
     console.log(`  GET /api/ditmemaysun  - Kết quả Tài Xỉu mới nhất`);
     console.log(`  GET /api/history      - Lịch sử kết quả (?limit=10)`);
-    console.log(`  GET /api/status       - Trạng thái hệ thống`);
+    console.log(`  GET /api/status       - Trạng thái hệ thống chi tiết`);
     console.log(`  GET /api/session      - Thông tin phiên hiện tại`);
     console.log(`  GET /                 - Thông tin tổng quan`);
     console.log(`\n${'='.repeat(50)}`);
