@@ -6,19 +6,7 @@ const app = express();
 app.use(cors());
 const PORT = process.env.PORT || 3001;
 
-let apiResponseData = {
-    "Phien": null,
-    "Xuc_xac_1": null,
-    "Xuc_xac_2": null,
-    "Xuc_xac_3": null,
-    "Tong": null,
-    "Ket_qua": "",
-    "id": "@tranhoang2286"
-};
-
-let currentSessionId = null;
-const patternHistory = [];
-
+// ------------------ CẤU HÌNH ------------------
 const WEBSOCKET_URL = "wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0";
 const WS_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -27,6 +15,12 @@ const WS_HEADERS = {
 const RECONNECT_DELAY = 2500;
 const PING_INTERVAL = 15000;
 
+// ------------------ STATE ------------------
+let currentSessionId = null;       // ID phiên đang chờ
+let lastResult = null;            // Kết quả cuối cùng (có phiên)
+let isWaitingForResult = false;   // Đang chờ kết quả của phiên hiện tại
+
+// ------------------ INIT MESSAGES ------------------
 const initialMessages = [
     [
         1,
@@ -42,6 +36,7 @@ const initialMessages = [
     [6, "MiniGame", "lobbyPlugin", { cmd: 10001 }]
 ];
 
+// ------------------ WEBSOCKET ------------------
 let ws = null;
 let pingInterval = null;
 let reconnectTimeout = null;
@@ -56,6 +51,7 @@ function connectWebSocket() {
 
     ws.on('open', () => {
         console.log('[✅] WebSocket connected.');
+        // Gửi tin nhắn khởi tạo
         initialMessages.forEach((msg, i) => {
             setTimeout(() => {
                 if (ws.readyState === WebSocket.OPEN) {
@@ -64,6 +60,7 @@ function connectWebSocket() {
             }, i * 600);
         });
 
+        // Ping giữ kết nối
         clearInterval(pingInterval);
         pingInterval = setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -73,30 +70,37 @@ function connectWebSocket() {
     });
 
     ws.on('pong', () => {
-        console.log('[📶] Ping OK.');
+        // console.log('[📶] Ping OK.');
     });
 
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-
-            if (!Array.isArray(data) || typeof data[1] !== 'object') {
-                return;
-            }
+            if (!Array.isArray(data) || typeof data[1] !== 'object') return;
 
             const { cmd, sid, d1, d2, d3, gBB } = data[1];
 
+            // 1. LƯU SESSION ID KHI CÓ PHIÊN MỚI
             if (cmd === 1008 && sid) {
                 currentSessionId = sid;
+                isWaitingForResult = true; // Bắt đầu chờ kết quả cho phiên này
+                console.log(`[🆕] New session: ${sid}`);
+                return;
             }
 
-            if (cmd === 1003 && gBB) {
-                if (!d1 || !d2 || !d3) return;
+            // 2. XỬ LÝ KẾT QUẢ (CMD 1003)
+            if (cmd === 1003 && gBB && d1 && d2 && d3) {
+                // Đợi đúng phiên đã lưu (nếu có)
+                if (!isWaitingForResult || !currentSessionId) {
+                    console.log(`[⏳] Ignore result (no pending session)`);
+                    return;
+                }
 
                 const total = d1 + d2 + d3;
                 const result = (total > 10) ? "Tài" : "Xỉu";
 
-                apiResponseData = {
+                // LƯU KẾT QUẢ CÓ KÈM PHIÊN
+                lastResult = {
                     "Phien": currentSessionId,
                     "Xuc_xac_1": d1,
                     "Xuc_xac_2": d2,
@@ -105,38 +109,55 @@ function connectWebSocket() {
                     "Ket_qua": result,
                     "id": "@tranhoang2286"
                 };
-                
-                console.log(`Phiên ${apiResponseData.Phien}: ${apiResponseData.Tong} (${apiResponseData.Ket_qua})`);
-                
+
+                console.log(`[🎯] Session ${currentSessionId}: ${d1} ${d2} ${d3} => ${total} (${result})`);
+
+                // RESET STATE: sẵn sàng cho phiên tiếp theo
+                isWaitingForResult = false;
                 currentSessionId = null;
             }
         } catch (e) {
-            console.error('[❌] Lỗi xử lý message:', e.message);
+            console.error('[❌] Parse error:', e.message);
         }
     });
 
     ws.on('close', (code, reason) => {
-        console.log(`[🔌] WebSocket closed. Code: ${code}, Reason: ${reason.toString()}`);
+        console.log(`[🔌] Closed. Code: ${code}`);
         clearInterval(pingInterval);
         clearTimeout(reconnectTimeout);
         reconnectTimeout = setTimeout(connectWebSocket, RECONNECT_DELAY);
     });
 
     ws.on('error', (err) => {
-        console.error('[❌] WebSocket error:', err.message);
+        console.error('[❌] WS Error:', err.message);
         ws.close();
     });
 }
 
+// ------------------ API ------------------
 app.get('/api/ditmemaysun', (req, res) => {
-    res.json(apiResponseData);
+    if (lastResult) {
+        res.json(lastResult);
+    } else {
+        // Trả về dữ liệu mặc định nếu chưa có phiên
+        res.json({
+            "Phien": null,
+            "Xuc_xac_1": null,
+            "Xuc_xac_2": null,
+            "Xuc_xac_3": null,
+            "Tong": null,
+            "Ket_qua": "",
+            "id": "@tranhoang2286"
+        });
+    }
 });
 
 app.get('/', (req, res) => {
-    res.json(apiResponseData);
+    res.json(lastResult || { status: "waiting" });
 });
 
+// ------------------ START ------------------
 app.listen(PORT, () => {
-    console.log(`[🌐] Server is running at http://localhost:${PORT}`);
+    console.log(`[🌐] Server running at http://localhost:${PORT}`);
     connectWebSocket();
 });
