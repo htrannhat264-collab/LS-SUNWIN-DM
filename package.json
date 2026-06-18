@@ -1,47 +1,17 @@
-
 {
-  "name": "xuc-xac-ai-analyzer",
-  "version": "4.0.0",
-  "description": "Hệ thống phân tích ma trận đa chiều siêu mạnh cho game xúc xắc - Không sử dụng random",
-  "main": "index.js",
+  "name": "xuc-xac-ai-super",
+  "version": "5.0.0",
+  "description": "Hệ thống phân tích xúc xắc siêu mạnh - 84 models không random",
+  "main": "sun2.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "node test.js"
+    "start": "node sun2.js"
   },
-  "keywords": [
-    "xuc-xac",
-    "ai",
-    "analyzer",
-    "matrix",
-    "advanced-algorithm",
-    "prediction",
-    "dice-game",
-    "statistics",
-    "machine-learning"
-  ],
-  "author": "@tranhoang2286",
-  "license": "MIT",
   "dependencies": {
-    "axios": "^1.6.2",
-    "colors": "^1.4.0",
-    "figlet": "^1.7.0",
-    "chalk": "^5.3.0",
-    "cli-table3": "^0.6.3",
-    "moment": "^2.29.4"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
+    "ws": "^8.14.2",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
   },
   "engines": {
-    "node": ">=14.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/tranhoang2286/xuc-xac-analyzer"
-  },
-  "bugs": {
-    "url": "https://github.com/tranhoang2286/xuc-xac-analyzer/issues"
-  },
-  "homepage": "https://github.com/tranhoang2286/xuc-xac-analyzer#readme"
+    "node": ">=16.0.0"
+  }
 }
